@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ARM — Live Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Gilda+Display&family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="dashboard.css"/>
+</head>
+<body>
+
+<div id="topbar">
+  <a href="index.html" class="back-btn">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Back
+  </a>
+  <span class="logo">ARM //</span>
+  <span style="font-size:0.68rem;color:var(--muted);letter-spacing:0.12em;">Gesture Dashboard</span>
+  <div class="legend-pill"><div class="legend-dot" style="background:var(--grpA)"></div>Palm / Wrist</div>
+  <div class="legend-pill"><div class="legend-dot" style="background:var(--accent2)"></div>Finger Group</div>
+  <div class="topbar-spacer"></div>
+  <div class="status-dot" id="status-dot"></div>
+  <span class="status-label" id="status-label">Disconnected</span>
+</div>
+
+<div id="main">
+  <div id="sidebar">
+
+    <!-- Connection -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Endpoint</div>
+      <div class="endpoint-wrap">
+        <input type="text" id="url-input" value="/api/frame" spellcheck="false"/>
+      </div>
+      <div class="range-row-inner">
+        <label>Rate</label>
+        <input type="range" id="hz-slider" min="1" max="60" step="1" value="20"/>
+        <span id="hz-label">20 Hz</span>
+      </div>
+      <div class="range-row-inner">
+        <label>Trail</label>
+        <input type="range" id="trail-slider" min="5" max="300" step="5" value="80"/>
+        <span id="trail-label">80 pts</span>
+      </div>
+      <button class="ctrl-btn" id="btn-connect" style="margin-top:6px;">
+        <div class="btn-dot"></div>Connect
+      </button>
+    </div>
+
+    <!-- Workspace bounds -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Workspace Bounds</div>
+      <div class="bounds-grid">
+        <div class="bounds-cell"><label>X min</label><input type="number" id="xmin" value="0" step="any"/></div>
+        <div class="bounds-cell"><label>X max</label><input type="number" id="xmax" value="1" step="any"/></div>
+        <div class="bounds-cell"><label>Y min</label><input type="number" id="ymin" value="0" step="any"/></div>
+        <div class="bounds-cell"><label>Y max</label><input type="number" id="ymax" value="1" step="any"/></div>
+      </div>
+    </div>
+
+    <!-- Display -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Display</div>
+      <div class="toggle-row">
+        <button class="toggle-btn on-grpA" id="toggle-grpA">
+          <div class="legend-dot" style="background:var(--grpA);width:7px;height:7px;border-radius:50%;flex-shrink:0;"></div>Palm
+        </button>
+        <button class="toggle-btn on-grpB" id="toggle-grpB">
+          <div class="legend-dot" style="background:var(--accent2);width:7px;height:7px;border-radius:50%;flex-shrink:0;"></div>Fingers
+        </button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Live Position</div>
+      <div class="stat-grid">
+        <div class="stat-cell"><div class="stat-cell-label">Palm X</div><div class="stat-cell-value" id="m-px">—</div></div>
+        <div class="stat-cell"><div class="stat-cell-label">Palm Y</div><div class="stat-cell-value" id="m-py">—</div></div>
+        <div class="stat-cell"><div class="stat-cell-label">Finger X</div><div class="stat-cell-value grpB" id="m-fx">—</div></div>
+        <div class="stat-cell"><div class="stat-cell-label">Finger Y</div><div class="stat-cell-value grpB" id="m-fy">—</div></div>
+      </div>
+    </div>
+
+    <!-- Sequences -->
+    <div class="sidebar-section" style="flex:1;display:flex;flex-direction:column;">
+      <div class="sidebar-label">Saved Sequences</div>
+      <div class="seq-list" id="seq-list"><span class="no-seq">No recordings yet.</span></div>
+    </div>
+
+    <!-- Controls -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Controls</div>
+      <div class="seq-name-wrap">
+        <input type="text" id="seq-name" placeholder="Sequence name…" maxlength="32"/>
+      </div>
+      <button class="ctrl-btn" id="btn-record"><div class="btn-dot"></div>Start recording</button>
+      <button class="ctrl-btn" id="btn-clear">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 2l6 6M8 2L2 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        Clear trail
+      </button>
+      <button class="ctrl-btn export" id="btn-export">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M5 1v6M2 5l3 3 3-3M1 9h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Export JSON
+      </button>
+    </div>
+
+  </div>
+
+  <div id="graph-area">
+    <div id="canvas-wrap">
+      <canvas id="main-canvas"></canvas>
+      <div id="tooltip"><div class="tooltip-box">
+        <div class="tooltip-time" id="tt-time"></div>
+        <div class="tooltip-pos" id="tt-pos" style="color:var(--grpA)"></div>
+        <div class="tooltip-pos" id="tt-fpos" style="color:var(--accent2)"></div>
+      </div></div>
+      <div id="rec-banner">
+        <div style="width:7px;height:7px;border-radius:50%;background:var(--red);"></div>
+        REC <span id="rec-time-banner">00:00</span>
+      </div>
+      <div id="play-banner">
+        <svg width="9" height="10" viewBox="0 0 9 10" fill="var(--accent2)"><path d="M1 1l7 4-7 4V1z"/></svg>
+        PLAYING <span id="play-seq-name"></span>
+      </div>
+    </div>
+    <div id="bottom-bar">
+      <div>Trail: <span id="b-trail">0</span> pts</div>
+      <div>Rate: <span id="b-rate">—</span></div>
+      <div id="rec-timer" style="display:none">● REC <span id="b-rec-time">00:00</span></div>
+      <div style="margin-left:auto;color:var(--muted)">Hover to inspect · <span id="b-url">/api/frame</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  HOW TO CONNECT YOUR PYTHON SERVER
+//
+//  Your Flask endpoint must return a JSON object with these keys:
+//    { "px": <float>, "py": <float>, "fx": <float>, "fy": <float> }
+//
+//  px/py = palm or wrist position
+//  fx/fy = finger group position
+//  All values should be in the same coordinate space as your
+//  Workspace Bounds (e.g. 0–1 normalised, or raw pixel coords).
+//
+//  Minimal Flask example:
+//  ──────────────────────────────────────────────────────────────
+//  from flask import Flask, jsonify
+//  from flask_cors import CORS          # pip install flask-cors
+//
+//  app = Flask(__name__)
+//  CORS(app)                            # required for browser access
+//
+//  @app.route('/frame')
+//  def frame():
+//      return jsonify({
+//          "px": palm_x,   "py": palm_y,
+//          "fx": finger_x, "fy": finger_y,
+//      })
+//
+//  app.run(port=5000)
+//  ──────────────────────────────────────────────────────────────
+//  Then hit Connect in the dashboard. Set Workspace Bounds to
+//  match the coordinate range your Python script outputs.
+// ═══════════════════════════════════════════════════════════════
+
+// ── STATE ──
+let trail      = [];
+let recData    = [];
+let sequences  = [];
+let polling    = false;
+let recording  = false;
+let playback   = null;
+let pollTimer  = null;
+let recInterval= null;
+let recStart   = 0;
+let showGrpA   = true;
+let showGrpB   = true;
+let hoverX     = null;
+let hoverY     = null;
+
+// fps tracking
+let fpsCount = 0, fpsLast = performance.now(), currentFps = 0;
+setInterval(() => {
+  const dt = (performance.now() - fpsLast) / 1000;
+  currentFps = Math.round(fpsCount / dt);
+  fpsCount = 0;
+  fpsLast = performance.now();
+  document.getElementById('b-rate').textContent = polling ? currentFps + ' fps' : '—';
+}, 1000);
+
+// ── CANVAS ──
+const canvas = document.getElementById('main-canvas');
+const ctx    = canvas.getContext('2d');
+const wrap   = document.getElementById('canvas-wrap');
+
+function resizeCanvas() {
+  canvas.width  = wrap.clientWidth  * devicePixelRatio;
+  canvas.height = wrap.clientHeight * devicePixelRatio;
+  drawScene();
+}
+new ResizeObserver(resizeCanvas).observe(wrap);
+resizeCanvas();
+
+// ── BOUNDS ──
+function bounds() {
+  return {
+    x0: parseFloat(document.getElementById('xmin').value) || 0,
+    x1: parseFloat(document.getElementById('xmax').value) || 1,
+    y0: parseFloat(document.getElementById('ymin').value) || 0,
+    y1: parseFloat(document.getElementById('ymax').value) || 1,
+  };
+}
+['xmin','xmax','ymin','ymax'].forEach(id =>
+  document.getElementById(id).addEventListener('change', drawScene)
+);
+
+// ── COORDINATE MAPPING ──
+// Padded workspace rect sits inside the canvas.
+// Y is flipped: y0 maps to the bottom edge, y1 to the top — so "up" in your
+// coordinate space is "up" on screen.
+const PAD = { top:40, right:32, bottom:40, left:32 };
+
+function toCanvasX(v, b) {
+  const dpr = devicePixelRatio;
+  return PAD.left * dpr + ((v - b.x0) / (b.x1 - b.x0)) * (canvas.width - (PAD.left + PAD.right) * dpr);
+}
+function toCanvasY(v, b) {
+  const dpr = devicePixelRatio;
+  const ph = canvas.height - (PAD.top + PAD.bottom) * dpr;
+  return PAD.top * dpr + ph - ((v - b.y0) / (b.y1 - b.y0)) * ph;
+}
+
+// ── INGEST ──
+function ingestFrame(raw) {
+  const frame = {
+    t:  raw.t  ?? (performance.now() / 1000),
+    px: parseFloat(raw.px ?? raw.palm_x   ?? 0),
+    py: parseFloat(raw.py ?? raw.palm_y   ?? 0),
+    fx: parseFloat(raw.fx ?? raw.finger_x ?? 0),
+    fy: parseFloat(raw.fy ?? raw.finger_y ?? 0),
+  };
+  const maxTrail = parseInt(document.getElementById('trail-slider').value);
+  trail.push(frame);
+  while (trail.length > maxTrail) trail.shift();   // drop oldest — this is the live rolling window
+
+  if (recording) recData.push(frame);
+
+  document.getElementById('m-px').textContent = frame.px.toFixed(3);
+  document.getElementById('m-py').textContent = frame.py.toFixed(3);
+  document.getElementById('m-fx').textContent = frame.fx.toFixed(3);
+  document.getElementById('m-fy').textContent = frame.fy.toFixed(3);
+  document.getElementById('b-trail').textContent = trail.length;
+  fpsCount++;
+}
+
+// ── POLLING ──
+async function poll() {
+  if (!polling) return;
+  const url = document.getElementById('url-input').value.trim();
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    ingestFrame(data);
+    setStatus('live', 'Live');
+  } catch (e) {
+    setStatus('error', e.message.slice(0, 32));
+  }
+  drawScene();
+  const hz = parseInt(document.getElementById('hz-slider').value);
+  pollTimer = setTimeout(poll, Math.round(1000 / hz));
+}
+
+function startPolling() {
+  polling = true;
+  document.getElementById('btn-connect').innerHTML = '<div class="btn-dot"></div>Disconnect';
+  document.getElementById('url-input').disabled = true;
+  const url = document.getElementById('url-input').value.trim();
+  document.getElementById('b-url').textContent = url;
+  setStatus('live', 'Connecting…');
+  poll();
+}
+
+function stopPolling() {
+  polling = false;
+  clearTimeout(pollTimer);
+  document.getElementById('btn-connect').innerHTML = '<div class="btn-dot"></div>Connect';
+  document.getElementById('url-input').disabled = false;
+  if (!recording) setStatus('', 'Disconnected');
+}
+
+function setStatus(type, text) {
+  document.getElementById('status-dot').className = 'status-dot' + (type ? ' ' + type : '');
+  document.getElementById('status-label').textContent = text;
+}
+
+document.getElementById('btn-connect').addEventListener('click', () => {
+  polling ? stopPolling() : startPolling();
+});
+
+// ── SLIDERS ──
+document.getElementById('hz-slider').addEventListener('input', e => {
+  document.getElementById('hz-label').textContent = e.target.value + ' Hz';
+});
+document.getElementById('trail-slider').addEventListener('input', e => {
+  document.getElementById('trail-label').textContent = e.target.value + ' pts';
+  const max = parseInt(e.target.value);
+  while (trail.length > max) trail.shift();
+  drawScene();
+});
+
+// ── VISIBILITY ──
+document.getElementById('toggle-grpA').addEventListener('click', e => {
+  showGrpA = !showGrpA;
+  e.currentTarget.className = 'toggle-btn' + (showGrpA ? ' on-grpA' : '');
+  drawScene();
+});
+document.getElementById('toggle-grpB').addEventListener('click', e => {
+  showGrpB = !showGrpB;
+  e.currentTarget.className = 'toggle-btn' + (showGrpB ? ' on-grpB' : '');
+  drawScene();
+});
+
+// ── RECORD ──
+function fmtTime(sec) {
+  return String(Math.floor(sec/60)).padStart(2,'0') + ':' + String(Math.floor(sec%60)).padStart(2,'0');
+}
+
+document.getElementById('btn-record').addEventListener('click', () => {
+  recording = !recording;
+  const btn = document.getElementById('btn-record');
+  if (recording) {
+    recStart = performance.now();
+    recData  = [];
+    btn.classList.add('active');
+    btn.innerHTML = '<div class="btn-dot" style="background:var(--red)"></div>Stop recording';
+    document.getElementById('rec-banner').classList.add('show');
+    document.getElementById('rec-timer').style.display = '';
+    setStatus('recording', 'Recording');
+    recInterval = setInterval(() => {
+      const s = fmtTime((performance.now() - recStart) / 1000);
+      document.getElementById('rec-time-banner').textContent = s;
+      document.getElementById('b-rec-time').textContent = s;
+    }, 500);
+  } else {
+    btn.classList.remove('active');
+    btn.innerHTML = '<div class="btn-dot"></div>Start recording';
+    document.getElementById('rec-banner').classList.remove('show');
+    document.getElementById('rec-timer').style.display = 'none';
+    clearInterval(recInterval);
+    setStatus(polling ? 'live' : '', polling ? 'Live' : 'Disconnected');
+    if (recData.length) saveSequence(recData.slice());
+    recData = [];
+  }
+});
+
+// ── SEQUENCES ──
+function saveSequence(frames) {
+  const raw  = document.getElementById('seq-name').value.trim();
+  const name = raw || ('Sequence ' + (sequences.length + 1));
+  document.getElementById('seq-name').value = '';
+  sequences.push({ name, frames });
+  renderSeqList();
+}
+
+function renderSeqList() {
+  const list = document.getElementById('seq-list');
+  list.innerHTML = '';
+  if (!sequences.length) { list.innerHTML = '<span class="no-seq">No recordings yet.</span>'; return; }
+  sequences.forEach((seq, i) => {
+    const item = document.createElement('div');
+    item.className = 'seq-item';
+    item.innerHTML = `<div><div class="seq-item-name">${seq.name}</div><div class="seq-item-meta">${seq.frames.length} frames</div></div><button class="seq-play-btn" data-idx="${i}">&#9654; Play</button>`;
+    item.querySelector('.seq-play-btn').addEventListener('click', e => { e.stopPropagation(); startPlayback(i); });
+    list.appendChild(item);
+  });
+}
+
+// ── PLAYBACK ──
+function startPlayback(idx) {
+  if (playback) stopPlayback();
+  const seq = sequences[idx];
+  if (!seq.frames.length) return;
+  const offset = performance.now()/1000 - seq.frames[0].t;
+  const remapped = seq.frames.map(f => ({ ...f, t: f.t + offset }));
+  let fi = 0;
+  const timer = setInterval(() => {
+    if (fi >= remapped.length) { stopPlayback(); return; }
+    ingestFrame(remapped[fi++]);
+    drawScene();
+  }, 20);
+  playback = { seq, timer };
+  document.getElementById('play-banner').classList.add('show');
+  document.getElementById('play-seq-name').textContent = seq.name;
+  setStatus('live', 'Playing');
+  document.querySelectorAll('.seq-item').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+    const btn = el.querySelector('.seq-play-btn');
+    btn.classList.toggle('playing', i === idx);
+    if (i === idx) btn.textContent = '■ Stop';
+  });
+}
+
+function stopPlayback() {
+  if (!playback) return;
+  clearInterval(playback.timer);
+  playback = null;
+  document.getElementById('play-banner').classList.remove('show');
+  setStatus(polling ? 'live' : '', polling ? 'Live' : 'Disconnected');
+  document.querySelectorAll('.seq-item').forEach(el => {
+    el.classList.remove('active');
+    const btn = el.querySelector('.seq-play-btn');
+    btn.classList.remove('playing');
+    btn.textContent = '▶ Play';
+  });
+}
+
+// ── CLEAR ──
+document.getElementById('btn-clear').addEventListener('click', () => {
+  trail = [];
+  if (recording) recData = [];
+  stopPlayback();
+  drawScene();
+});
+
+// ── EXPORT ──
+document.getElementById('btn-export').addEventListener('click', () => {
+  const src = recording && recData.length ? recData : trail;
+  if (!src.length) { alert('No data to export.'); return; }
+  const blob = new Blob([JSON.stringify(src, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = 'gesture_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ── HOVER ──
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  hoverX = e.clientX - rect.left;
+  hoverY = e.clientY - rect.top;
+  const tip = document.getElementById('tooltip');
+  tip.style.display = 'block';
+  let tx = hoverX + 18, ty = hoverY - 8;
+  if (tx + 190 > rect.width) tx = hoverX - 200;
+  if (ty < 0) ty = 4;
+  tip.style.left = tx + 'px';
+  tip.style.top  = ty + 'px';
+  drawScene();
+});
+canvas.addEventListener('mouseleave', () => {
+  hoverX = null;
+  document.getElementById('tooltip').style.display = 'none';
+  drawScene();
+});
+
+// ── DRAW ──
+function drawScene() {
+  const W   = canvas.width;
+  const H   = canvas.height;
+  const dpr = devicePixelRatio;
+  const b   = bounds();
+  const ox  = PAD.left   * dpr;
+  const oy  = PAD.top    * dpr;
+  const pw  = W - (PAD.left + PAD.right)  * dpr;
+  const ph  = H - (PAD.top  + PAD.bottom) * dpr;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#efe9e0';
+  ctx.fillRect(0, 0, W, H);
+
+  // workspace fill
+  ctx.fillStyle = 'rgba(50,23,3,0.03)';
+  ctx.fillRect(ox, oy, pw, ph);
+
+  // grid
+  ctx.strokeStyle = '#3d2707e3';
+  ctx.lineWidth   = 0.5;
+  ctx.globalAlpha = 0.15;
+  for (let i = 1; i < 4; i++) {
+    ctx.beginPath(); ctx.moveTo(ox + pw*i/4, oy); ctx.lineTo(ox + pw*i/4, oy+ph); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ox, oy + ph*i/4); ctx.lineTo(ox+pw, oy + ph*i/4); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // workspace border
+  ctx.strokeStyle = '#3d2707e3';
+  ctx.lineWidth   = 1.5;
+  ctx.strokeRect(ox, oy, pw, ph);
+
+  // corner coordinate labels
+  ctx.font      = `${10*dpr}px 'Courier New'`;
+  ctx.fillStyle = 'rgba(61,39,7,0.55)';
+  [
+    { v:[b.x0,b.y0], ax:ox,    ay:oy+ph, align:'left',  dy: 14 },
+    { v:[b.x1,b.y0], ax:ox+pw, ay:oy+ph, align:'right', dy: 14 },
+    { v:[b.x0,b.y1], ax:ox,    ay:oy,    align:'left',  dy: -5 },
+    { v:[b.x1,b.y1], ax:ox+pw, ay:oy,    align:'right', dy: -5 },
+  ].forEach(({ v, ax, ay, align, dy }) => {
+    ctx.textAlign = align;
+    ctx.fillText('('+v[0].toFixed(2)+', '+v[1].toFixed(2)+')', ax + (align==='left'?5:-5)*dpr, ay + dy*dpr);
+  });
+
+  // axis nudge labels
+  ctx.fillStyle = 'rgba(61,39,7,0.3)';
+  ctx.font      = `${9*dpr}px 'Courier New'`;
+  ctx.textAlign = 'center';
+  ctx.fillText('X \u2192', ox + pw/2, oy + ph + 26*dpr);
+  ctx.save();
+  ctx.translate(10*dpr, oy + ph/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.fillText('Y \u2192', 0, 0);
+  ctx.restore();
+
+  if (!trail.length) return;
+
+  const cx = v => toCanvasX(v, b);
+  const cy = v => toCanvasY(v, b);
+
+  // clip traces to workspace rect
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(ox, oy, pw, ph);
+  ctx.clip();
+
+  // draw a fading trace — each segment gets more opaque toward the head
+  function drawTrace(color, xFn, yFn) {
+    if (trail.length < 2) return;
+    const n = trail.length;
+    for (let i = 1; i < n; i++) {
+      const age   = i / (n - 1);
+      ctx.beginPath();
+      ctx.moveTo(cx(xFn(trail[i-1])), cy(yFn(trail[i-1])));
+      ctx.lineTo(cx(xFn(trail[i])),   cy(yFn(trail[i])));
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.1 + 0.9 * age;
+      ctx.lineWidth   = 1.8 * dpr;
+      ctx.lineJoin    = 'round';
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  if (showGrpA) drawTrace('#321703', f => f.px, f => f.py);
+  if (showGrpB) drawTrace('#7b61ff', f => f.fx, f => f.fy);
+
+  // live head dots
+  const last = trail[trail.length - 1];
+  function liveDot(xv, yv, color, label) {
+    const x = cx(xv), y = cy(yv);
+    ctx.beginPath();
+    ctx.arc(x, y, 5*dpr, 0, Math.PI*2);
+    ctx.fillStyle   = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = 8*dpr;
+    ctx.fill();
+    ctx.shadowBlur  = 0;
+    ctx.beginPath();
+    ctx.arc(x, y, 5*dpr, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(239,233,224,0.75)';
+    ctx.lineWidth   = 1.5*dpr;
+    ctx.stroke();
+    // coordinate label — flip side near edges
+    const flipX = x > ox + pw * 0.72;
+    const flipY = y < oy + 20*dpr;
+    ctx.font      = `${10*dpr}px 'Courier New'`;
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.9;
+    ctx.textAlign = flipX ? 'right' : 'left';
+    ctx.fillText(label, x + (flipX ? -9 : 9)*dpr, y + (flipY ? 18 : -9)*dpr);
+    ctx.globalAlpha = 1;
+  }
+
+  if (showGrpA && last) liveDot(last.px, last.py, '#321703',
+    'P('+last.px.toFixed(3)+', '+last.py.toFixed(3)+')');
+  if (showGrpB && last) liveDot(last.fx, last.fy, '#7b61ff',
+    'F('+last.fx.toFixed(3)+', '+last.fy.toFixed(3)+')');
+
+  ctx.restore();
+
+  // hover crosshair
+  if (hoverX !== null && trail.length) {
+    const hxPx = hoverX * dpr, hyPx = hoverY * dpr;
+    if (hxPx >= ox && hxPx <= ox+pw && hyPx >= oy && hyPx <= oy+ph) {
+      // find nearest trail point by 2D distance to palm position
+      let nearest = null, minD = Infinity;
+      for (const f of trail) {
+        const dx = cx(f.px) - hxPx, dy = cy(f.py) - hyPx;
+        const d  = dx*dx + dy*dy;
+        if (d < minD) { minD = d; nearest = f; }
+      }
+      if (nearest) {
+        const nx = cx(nearest.px), ny = cy(nearest.py);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(61,39,7,0.22)';
+        ctx.lineWidth   = 1;
+        ctx.setLineDash([4*dpr, 4*dpr]);
+        ctx.beginPath(); ctx.moveTo(nx, oy);   ctx.lineTo(nx, oy+ph); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ox, ny);   ctx.lineTo(ox+pw, ny); ctx.stroke();
+        ctx.restore();
+        const elapsed = (nearest.t - (trail[0]?.t || 0)).toFixed(2);
+        document.getElementById('tt-time').textContent  = 't = '+elapsed+' s';
+        document.getElementById('tt-pos').textContent   = 'Palm   '+nearest.px.toFixed(3)+', '+nearest.py.toFixed(3);
+        document.getElementById('tt-fpos').textContent  = 'Finger '+nearest.fx.toFixed(3)+', '+nearest.fy.toFixed(3);
+      }
+    }
+  }
+}
+
+drawScene();
+</script>
+</body>
+</html>
