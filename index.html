@@ -41,12 +41,20 @@
     </div>
   </div>
 
-  <a href="/dashboard" class="cta-btn">
-    Open live dashboard
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-  </a>
+  <div style="display: flex; gap: 1rem; align-items: center; justify-content: center;">
+    <button id="btn-start-arm" class="cta-btn" style="background: rgba(180, 151, 123, 1); color: #221b14; border: none; cursor: pointer;">
+      Start vision tracker
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M4 3l8 5-8 5V3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <a href="/dashboard" class="cta-btn">
+      Open live dashboard
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </a>
+  </div>
 
   <div class="scroll-hint">
     <span>scroll</span>
@@ -307,7 +315,7 @@ const drawHero = setupCanvas(document.getElementById("waveform-canvas"), (ctx, c
     const p = index / Math.max(1, history.length - 1);
     const x = p * w;
     const y =
-      h * 0.62 -
+      h * 0.30 +
       item.hand_data.y * h * 0.32 +
       Math.sin(p * 18 + hand.z * 8) * (20 + energy * 26) +
       (item.hand_data.z - 0.5) * 45;
@@ -325,7 +333,7 @@ const drawHero = setupCanvas(document.getElementById("waveform-canvas"), (ctx, c
     const p = index / Math.max(1, history.length - 1);
     const x = p * w;
     const y =
-      h * 0.62 -
+      h * 0.30 +
       item.hand_data.y * h * 0.32 +
       Math.cos(p * 10 + item.hand_data.x * 6) * 10 +
       (item.hand_data.z - 0.5) * 45;
@@ -337,7 +345,7 @@ const drawHero = setupCanvas(document.getElementById("waveform-canvas"), (ctx, c
   ctx.stroke();
 
   const markerX = hand.x * w;
-  const markerY = h * 0.62 - hand.y * h * 0.32 + (hand.z - 0.5) * 45;
+  const markerY = h * 0.30 + hand.y * h * 0.32 + (hand.z - 0.5) * 45;
   ctx.beginPath();
   ctx.arc(markerX, markerY, 8 + energy * 8, 0, Math.PI * 2);
   ctx.fillStyle = "rgba(55, 45, 36, 0.95)";
@@ -498,6 +506,17 @@ reveals.forEach((el) => observer.observe(el));
 
 loadInitialHistory().then(connectStream);
 animate();
+
+document.getElementById('btn-start-arm').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.innerHTML = 'Starting...';
+    try {
+        await fetch('/api/start_arm', { method: 'POST' });
+        btn.innerHTML = 'Tracker active <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l4 4 6-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+    } catch(err) {
+        btn.innerHTML = 'Failed to start';
+    }
+});
 </script>
 </body>
 </html>

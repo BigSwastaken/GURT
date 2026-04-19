@@ -8,7 +8,9 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, jsonify, send_from_directory
+import sys
+import subprocess
+from flask import Flask, Response, jsonify, send_from_directory, request
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -183,6 +185,33 @@ def api_stream() -> Response:
             time.sleep(POLL_INTERVAL)
 
     return Response(generate(), mimetype="text/event-stream")
+
+# --- Process Control ---
+arm_process = None
+
+@app.post("/api/start_arm")
+def start_arm() -> Response:
+    global arm_process
+    if arm_process is None or arm_process.poll() is not None:
+        cmd = [sys.executable, "main.py", "--port", "COM10", "--robot-id", "gesture_follower"]
+        arm_process = subprocess.Popen(cmd, stdin=subprocess.PIPE, cwd=str(BASE_DIR))
+        try:
+            # Send a newline to quickly bypass the lerobot calibration prompt
+            arm_process.stdin.write(b'\n')
+            arm_process.stdin.flush()
+        except Exception:
+            pass
+        return jsonify({"status": "started"})
+    return jsonify({"status": "already running"})
+
+@app.post("/api/stop_arm")
+def stop_arm() -> Response:
+    global arm_process
+    if arm_process and arm_process.poll() is None:
+        arm_process.terminate()
+        arm_process = None
+        return jsonify({"status": "stopped"})
+    return jsonify({"status": "not running"})
 
 
 if __name__ == "__main__":

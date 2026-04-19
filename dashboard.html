@@ -198,9 +198,26 @@ const canvas = document.getElementById('main-canvas');
 const ctx    = canvas.getContext('2d');
 const wrap   = document.getElementById('canvas-wrap');
 
+let viewRect = { ox: 0, oy: 0, pw: 100, ph: 100 };
 function resizeCanvas() {
   canvas.width  = wrap.clientWidth  * devicePixelRatio;
   canvas.height = wrap.clientHeight * devicePixelRatio;
+  const dpr = devicePixelRatio;
+  const maxW = canvas.width - (PAD.left + PAD.right) * dpr;
+  const maxH = canvas.height - (PAD.top + PAD.bottom) * dpr;
+  
+  let ph = maxH;
+  let pw = ph * (640/480);
+  if (pw > maxW) {
+    pw = maxW;
+    ph = pw * (480/640);
+  }
+  viewRect = {
+    ox: PAD.left * dpr + (maxW - pw) / 2,
+    oy: PAD.top * dpr + (maxH - ph) / 2,
+    pw: pw,
+    ph: ph
+  };
   drawScene();
 }
 new ResizeObserver(resizeCanvas).observe(wrap);
@@ -226,13 +243,11 @@ function bounds() {
 const PAD = { top:40, right:32, bottom:40, left:32 };
 
 function toCanvasX(v, b) {
-  const dpr = devicePixelRatio;
-  return PAD.left * dpr + ((v - b.x0) / (b.x1 - b.x0)) * (canvas.width - (PAD.left + PAD.right) * dpr);
+  return viewRect.ox + ((v - b.x0) / (b.x1 - b.x0)) * viewRect.pw;
 }
 function toCanvasY(v, b) {
-  const dpr = devicePixelRatio;
-  const ph = canvas.height - (PAD.top + PAD.bottom) * dpr;
-  return PAD.top * dpr + ph - ((v - b.y0) / (b.y1 - b.y0)) * ph;
+  // mapped with 0 at bottom edge of our specific 4:3 viewport boundary.
+  return viewRect.oy + viewRect.ph - ((v - b.y0) / (b.y1 - b.y0)) * viewRect.ph;
 }
 
 // ── INGEST ──
@@ -467,10 +482,10 @@ function drawScene() {
   const H   = canvas.height;
   const dpr = devicePixelRatio;
   const b   = bounds();
-  const ox  = PAD.left   * dpr;
-  const oy  = PAD.top    * dpr;
-  const pw  = W - (PAD.left + PAD.right)  * dpr;
-  const ph  = H - (PAD.top  + PAD.bottom) * dpr;
+  const ox  = viewRect.ox;
+  const oy  = viewRect.oy;
+  const pw  = viewRect.pw;
+  const ph  = viewRect.ph;
 
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#efe9e0';

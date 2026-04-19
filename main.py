@@ -5,6 +5,10 @@ import time
 import argparse
 import numpy as np
 import json
+import sys
+import subprocess
+import webbrowser
+import atexit
 
 # ============================================================
 # Gesture Detection Helpers
@@ -59,7 +63,7 @@ class HandPositionTracker:
     of whether the hand is open or in a fist.
     """
 
-    def __init__(self, smoothing=0.4):
+    def __init__(self, smoothing=0.85):
         """
         Args:
             smoothing: Exponential moving average factor (0 = no smoothing, 1 = max smoothing).
@@ -275,8 +279,10 @@ class ArmController:
         # 90.0 is an offset that may need tuning depending on how the servo was mounted (-90 or 90)
         wrist_flex = -(shoulder_lift + elbow_flex) + 90.0
 
-        # Eliminate wrist roll tracking; keep claws permanently horizontal
-        wrist_roll = 90.0 
+        # Keep the claw in the same world orientation relative to the table
+        # Since the wrist is pointing down, wrist_roll acts as world yaw. 
+        # Compensating with shoulder_pan cancels out the rotation from the base.
+        wrist_roll = shoulder_pan + 90.0
 
         positions = {
             "shoulder_pan":  shoulder_pan,
@@ -430,8 +436,8 @@ def main():
                         help="Robot calibration ID (default: gesture_follower)")
     parser.add_argument("--camera", type=int, default=None,
                         help="Camera index. If omitted, auto-detects USB webcam.")
-    parser.add_argument("--smoothing", type=float, default=0.4,
-                        help="Position smoothing (0=none, 0.7=heavy). Default: 0.4")
+    parser.add_argument("--smoothing", type=float, default=0.85,
+                        help="Position smoothing (0=none, 0.9=heavy). Default: 0.85")
     parser.add_argument("--pan-range", type=float, default=45.0,
                         help="Shoulder pan range in degrees (default: 45)")
     parser.add_argument("--lift-range", type=float, default=30.0,
@@ -464,6 +470,11 @@ def main():
 
     if args.port:
         arm.connect()
+        # Bring arm to home position (all center values = 0,0,0 degrees) immediately on startup
+        print("[ARM] Moving to home position (0,0,0) and waiting for hand...")
+        initial_joints = arm.compute_joint_positions(0.5, 0.5, 0.5, 0.5, 0.5)
+        arm.set_gripper("open")
+        arm.send_arm_position(initial_joints, 100.0)
     else:
         print("[ARM] No --port specified. Running in PREVIEW MODE.")
         print("[ARM] To connect: python main.py --port COM3")
@@ -506,6 +517,8 @@ def main():
     joint_positions = arm.compute_joint_positions(0.5, 0.5, 0.5, 0.5, 0.5)
     tracking_active = False
     frames_since_lost = 0
+    tracking_acquired_time = 0
+    last_known_hand_coords = (0.5, 0.5, 0.5, 0.5, 0.5)
 
     while cap.isOpened():
         success, frame = cap.read()
@@ -522,15 +535,32 @@ def main():
         x_min = y_min = x_max = y_max = 0
 
         if results.multi_hand_landmarks:
-            tracking_active = True
-            frames_since_lost = 0
+            if not tracking_active:
+                tracking_active = True
+                tracking_acquired_time = time.time()
+                frames_since_lost = 0
+            else:
+                frames_since_lost = 0
 
             for hand_idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
                 # Draw skeleton
                 mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
                 # --- Position tracking (X, Y, Z, Tilt, Roll) ---
-                hand_x, hand_y, hand_z, hand_tilt, hand_roll = tracker.update(hand_landmarks)
+                raw_hx, raw_hy, raw_hz, raw_htilt, raw_hroll = tracker.update(hand_landmarks)
+
+                # --- 2-second transition ---
+                time_since_acquired = time.time() - tracking_acquired_time
+                if time_since_acquired < 2.0:
+                    blend = time_since_acquired / 2.0
+                    old_x, old_y, old_z, old_t, old_r = last_known_hand_coords
+                    hand_x = old_x + (raw_hx - old_x) * blend
+                    hand_y = old_y + (raw_hy - old_y) * blend
+                    hand_z = old_z + (raw_hz - old_z) * blend
+                    hand_tilt = old_t + (raw_htilt - old_t) * blend
+                    hand_roll = old_r + (raw_hroll - old_r) * blend
+                else:
+                    hand_x, hand_y, hand_z, hand_tilt, hand_roll = raw_hx, raw_hy, raw_hz, raw_htilt, raw_hroll
 
                 # --- Compute arm joint positions ---
                 joint_positions = arm.compute_joint_positions(hand_x, hand_y, hand_z, hand_tilt, hand_roll)
@@ -583,8 +613,10 @@ def main():
             # Hand lost
             frames_since_lost += 1
             if frames_since_lost > 15:  # ~0.5s at 30fps
-                tracking_active = False
-                tracker.reset()
+                if tracking_active:
+                    tracking_active = False
+                    tracker.reset()
+                    last_known_hand_coords = (hand_x, hand_y, hand_z, hand_tilt, hand_roll)
 
         # --- Gesture debouncing ---
         if current_gesture != last_gesture:
@@ -642,39 +674,75 @@ def main():
         cv2.putText(frame, "'q' quit | 'r' recalibrate Z",
                     (20, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (120, 120, 120), 1)
 
-        # JSON Data Stream
-        if tracking_active:
-            stream_data = {
-                "timestamp": time.time(),
-                "tracking_active": tracking_active,
-                "gesture": str(confirmed_gesture),
-                "bounding_box": {"x_min": x_min, "y_min": y_min, "x_max": x_max, "y_max": y_max},
-                "hand_data": {
-                    "x": hand_x, "y": hand_y, "z": hand_z, 
-                    "tilt": hand_tilt, "roll": hand_roll
-                },
-                "joint_positions": joint_positions,
-                "gripper_value": gripper_val
-            }
-            try:
-                with open("tracking_stream.json", "w") as f:
-                    json.dump(stream_data, f)
-            except Exception as e:
-                pass
+        # JSON Data Stream (Always write so dashboard gets status updates)
+        stream_data = {
+            "timestamp": time.time(),
+            "tracking_active": tracking_active,
+            "gesture": str(confirmed_gesture) if tracking_active else "UNKNOWN",
+            "bounding_box": {"x_min": x_min, "y_min": y_min, "x_max": x_max, "y_max": y_max},
+            "hand_data": {
+                "x": hand_x, "y": hand_y, "z": hand_z, 
+                "tilt": hand_tilt, "roll": hand_roll
+            },
+            "joint_positions": joint_positions,
+            "gripper_value": gripper_val if gripper_val is not None else 100.0
+        }
+        try:
+            with open("tracking_stream.json", "w") as f:
+                json.dump(stream_data, f)
+        except Exception as e:
+            pass
 
         cv2.imshow("Hand Tracking -> SO-101 Arm", frame)
 
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
+        if key == ord('q') or key == 27:  # 'q' or 'Esc'
             break
         elif key == ord('r'):
             tracker.ref_palm_size = None
             print("[TRACKER] Z-depth reference recalibrated")
 
+        # Allow program to close when user clicks the 'X' button on the window
+        try:
+            if cv2.getWindowProperty("Hand Tracking -> SO-101 Arm", cv2.WND_PROP_VISIBLE) < 1:
+                break
+        except Exception:
+            pass
+
     # Cleanup
+    if arm.connected:
+        print("[ARM] Parking arm to stable equilibrium position...")
+        park_joints = {
+            "shoulder_pan": 0.0,
+            "shoulder_lift": -args.lift_range,  # All the way back
+            "elbow_flex": args.elbow_range,     # All the way forward
+        }
+        # IK compensate wrist so claw points down
+        park_joints["wrist_flex"] = -(park_joints["shoulder_lift"] + park_joints["elbow_flex"]) + 90.0
+        park_joints["wrist_roll"] = 90.0 + park_joints["shoulder_pan"]
+        
+        arm.send_arm_position(park_joints, gripper_value=None)
+        time.sleep(1.0) # Give arm time to move into parking position before serial close
+
     cap.release()
     cv2.destroyAllWindows()
     arm.disconnect()
+    
+    # Broadcast final offline status packet
+    try:
+        with open("tracking_stream.json", "w") as f:
+            json.dump({
+                "timestamp": time.time(),
+                "tracking_active": False,
+                "gesture": "OFFLINE",
+                "bounding_box": {},
+                "hand_data": {"x": 0.5, "y": 0.5, "z": 0.5, "tilt": 0.5, "roll": 0.5},
+                "joint_positions": {"shoulder_pan": 0, "shoulder_lift": 0, "elbow_flex": 0, "wrist_flex": 90, "wrist_roll": 90},
+                "gripper_value": 50.0
+            }, f)
+    except Exception:
+        pass
+
     print("Done.")
 
 
