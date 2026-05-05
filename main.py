@@ -3,12 +3,7 @@ import mediapipe as mp
 import math
 import time
 import argparse
-import numpy as np
 import json
-import sys
-import subprocess
-import webbrowser
-import atexit
 
 #gestures helper functions
 def finger_is_extended(hand_landmarks, finger_tip_id, finger_pip_id):
@@ -72,15 +67,21 @@ class HandPositionTracker:
         self.ref_palm_size = None
 
     def _measure_palm_size(self, hand_landmarks):
-        """Measure palm size using landmarks that DON'T change with finger curl."""
+        """Measure depth using the most rigid anatomical bone (Wrist to Index Base).
+        Incorporates MediaPipe's Z-axis to compensate for the hand tilting.
+        """
         wrist = hand_landmarks.landmark[0]
-        mid_mcp = hand_landmarks.landmark[9]
         idx_mcp = hand_landmarks.landmark[5]
-        pinky_mcp = hand_landmarks.landmark[17]
 
-        palm_length = math.hypot(mid_mcp.x - wrist.x, mid_mcp.y - wrist.y)
-        palm_width = math.hypot(idx_mcp.x - pinky_mcp.x, idx_mcp.y - pinky_mcp.y)
-        return (palm_length + palm_width) / 2.0
+        # Get the differences in all 3 dimensions
+        dx = idx_mcp.x - wrist.x
+        dy = idx_mcp.y - wrist.y
+        dz = idx_mcp.z - wrist.z  # MediaPipe's relative depth
+
+        # 3D Pythagorean theorem: d = sqrt(x^2 + y^2 + z^2)
+        rigid_bone_length = math.sqrt(dx**2 + dy**2 + dz**2)
+        
+        return rigid_bone_length
 
     def _measure_tilt(self, hand_landmarks):
         """Measure hand tilt (pitch) for wrist_flex.
@@ -138,8 +139,8 @@ class HandPositionTracker:
 
         size_ratio = palm_size / self.ref_palm_size
         # Make Z-axis A LOT more sensitive: clamp between 0.85 and 1.15
-        size_ratio = max(0.85, min(1.15, size_ratio))
-        raw_z = (size_ratio - 0.85) / (1.15 - 0.85)
+        size_ratio = max(0.7, min(1.3, size_ratio))
+        raw_z = (size_ratio - 0.7) / (1.3 - 0.7)
 
         # --- Tilt and Roll ---
         raw_tilt = self._measure_tilt(hand_landmarks)
@@ -170,11 +171,6 @@ class HandPositionTracker:
         self.smooth_tilt = None
         self.smooth_roll = None
         self.ref_palm_size = None
-
-
-# ============================================================
-# Arm Controller
-# ============================================================
 
 class ArmController:
     """Controls the SO-101 follower arm via the LeRobot API.
@@ -327,18 +323,11 @@ class ArmController:
             except Exception as e:
                 print(f"[ARM] Error disconnecting: {e}")
 
-
-# ============================================================
-# Drawing Helpers
-# ============================================================
-
-def draw_position_bars(frame, x, y, z, tilt, roll, start_y=110, bar_w=150, bar_h=16):
+def draw_position_bars(frame, x, y, z, start_y=110, bar_w=150, bar_h=16):
     """Draw X/Y/Z/Tilt/Roll indicator bars on the frame."""
     labels = [("X", x, (66, 133, 244)),   # Blue
               ("Y", y, (52, 168, 83)),     # Green
-              ("Z", z, (234, 67, 53)),     # Red
-              ("Tilt", tilt, (255, 165, 0)), # Orange
-              ("Roll", roll, (128, 0, 128))] # Purple
+              ("Z", z, (234, 67, 53)), ]   # Red
     
     for i, (label, val, color) in enumerate(labels):
         oy = start_y + i * (bar_h + 8)
@@ -377,16 +366,10 @@ def draw_joint_values(frame, joint_positions, gripper_val, x_offset=None, start_
         cv2.putText(frame, text, (x_offset, oy),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
-
-# ============================================================
-# Camera Auto-Detection
-# ============================================================
-
 def auto_detect_camera():
-    """Scan available cameras and pick the best one.
-    
-    Strategy: pick the HIGHEST available index, which is typically the
-    external USB webcam (index 0 is usually the built-in laptop camera).
+    """Scan available cameras and pick the best one by selecting the
+    highest available index, which is typically the external USB webcam 
+    (index 0 is usually the built-in laptop camera).
     """
     print("[CAM] Scanning for cameras...")
     available = []
@@ -414,11 +397,6 @@ def auto_detect_camera():
         print(f"[CAM] To override: --camera {available[0]}")
 
     return chosen
-
-
-# ============================================================
-# Main
-# ============================================================
 
 def main():
     parser = argparse.ArgumentParser(description="Hand tracking -> SO-101 arm control")
@@ -470,7 +448,7 @@ def main():
         arm.send_arm_position(initial_joints, 100.0)
     else:
         print("[ARM] No --port specified. Running in PREVIEW MODE.")
-        print("[ARM] To connect: python main.py --port COM3")
+        print("[ARM] To connect: python main.py --port COM(your COM number)")
 
     # --- Hand Tracker ---
     tracker = HandPositionTracker(smoothing=args.smoothing)
@@ -497,7 +475,6 @@ def main():
     COLOR_OTHER = (255, 165, 0)
     COLOR_WHITE = (255, 255, 255)
     COLOR_CYAN = (255, 255, 0)
-    COLOR_YELLOW = (0, 255, 255)
 
     # Gesture debouncing
     gesture_hold_time = 0.3
@@ -519,7 +496,7 @@ def main():
             continue
 
         frame = cv2.flip(frame, 1)
-        h, w, c = frame.shape
+        h, w = frame.shape[:2]
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(rgb_frame)
 
@@ -542,7 +519,7 @@ def main():
                 # --- Position tracking (X, Y, Z, Tilt, Roll) ---
                 raw_hx, raw_hy, raw_hz, raw_htilt, raw_hroll = tracker.update(hand_landmarks)
 
-                # --- 2-second transition ---
+                #smoothed transition. ensures the arm doesn't instantly snap to somewhere too far
                 time_since_acquired = time.time() - tracking_acquired_time
                 if time_since_acquired < 2.0:
                     blend = time_since_acquired / 2.0
@@ -555,13 +532,9 @@ def main():
                 else:
                     hand_x, hand_y, hand_z, hand_tilt, hand_roll = raw_hx, raw_hy, raw_hz, raw_htilt, raw_hroll
 
-                # --- Compute arm joint positions ---
                 joint_positions = arm.compute_joint_positions(hand_x, hand_y, hand_z, hand_tilt, hand_roll)
-
-                # --- Detect gesture for gripper ---
                 current_gesture, fingers_count = detect_gesture(hand_landmarks)
 
-                # --- Compute bounding box ---
                 x_coords = [lm.x for lm in hand_landmarks.landmark]
                 y_coords = [lm.y for lm in hand_landmarks.landmark]
                 x_min = max(0, int(min(x_coords) * w) - 20)
@@ -589,12 +562,12 @@ def main():
                 cv2.putText(frame, label, (x_min, y_min - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-                # Palm center dot
+                #dot at palm
                 palm = hand_landmarks.landmark[9]
                 cx, cy = int(palm.x * w), int(palm.y * h)
                 cv2.circle(frame, (cx, cy), 10, color, cv2.FILLED)
 
-                # Draw crosshair at palm center
+                #crosshair for center of palm
                 cv2.line(frame, (cx - 20, cy), (cx + 20, cy), COLOR_CYAN, 1)
                 cv2.line(frame, (cx, cy - 20), (cx, cy + 20), COLOR_CYAN, 1)
 
@@ -611,7 +584,7 @@ def main():
                     tracker.reset()
                     last_known_hand_coords = (hand_x, hand_y, hand_z, hand_tilt, hand_roll)
 
-        # --- Gesture debouncing ---
+        #debouncing
         if current_gesture != last_gesture:
             last_gesture = current_gesture
             gesture_start_time = time.time()
@@ -625,10 +598,10 @@ def main():
                     elif current_gesture == "FIST":
                         arm.set_gripper("close")
 
-        # --- Send to arm (only when tracking is active) ---
+        #talk to the arm to move it
         gripper_val = arm.get_gripper_value()
         if tracking_active:
-            action = arm.send_arm_position(joint_positions, gripper_val)
+            arm.send_arm_position(joint_positions, gripper_val)
 
         # ============== HUD ==============
 
@@ -658,9 +631,9 @@ def main():
         cv2.putText(frame, track_text, (20, 80),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, track_color, 1)
 
-        # X, Y, Z, Tilt, Roll bars
+        # X, Y, Z, bars
         if tracking_active:
-            draw_position_bars(frame, hand_x, hand_y, hand_z, hand_tilt, hand_roll, start_y=100)
+            draw_position_bars(frame, hand_x, hand_y, hand_z, start_y=100)
             draw_joint_values(frame, joint_positions, gripper_val)
 
         # Bottom bar: instructions
@@ -683,7 +656,7 @@ def main():
         try:
             with open("tracking_stream.json", "w") as f:
                 json.dump(stream_data, f)
-        except Exception as e:
+        except Exception:
             pass
 
         cv2.imshow("Hand Tracking -> SO-101 Arm", frame)
